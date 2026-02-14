@@ -1,4 +1,4 @@
-//% color="#00C04A" weight=100 icon="\uf1b9" block="智能IIC灰度巡线"
+//% color="#00C04A" weight=100 icon="\uf1b9" block="智能IIC极简巡线"
 namespace AnalogLineFollow {
     let _kp = 0;
     let _ki = 0;
@@ -8,7 +8,9 @@ namespace AnalogLineFollow {
 
     let _baseSpeed = 60;
     let _brake = 1;
-    let _threshold = 120; // 新增：可自定义的黑白阈值
+
+    // 隐藏的内部阈值：因为硬件有一键学习功能，数值会两极分化，固定150极其安全
+    let _internalThreshold = 150;
 
     let _lastLeftSpeed = 0;
     let _lastRightSpeed = 0;
@@ -47,16 +49,16 @@ namespace AnalogLineFollow {
         CrossOver
     }
 
-    //% block="初始化 IIC巡线 Kp $p Ki $i Kd $d 基础速度 $baseSpeed 刹车 $brake 黑白阈值 $threshold 赛道 $line"
-    //% p.defl=0.07 i.defl=0 d.defl=0.09 baseSpeed.defl=60 brake.defl=1 threshold.defl=120
+    // 🚀 删除了阈值输入框，界面极致清爽！
+    //% block="初始化 IIC巡线 Kp $p Ki $i Kd $d 基础速度 $baseSpeed 刹车 $brake 赛道 $line"
+    //% p.defl=0.07 i.defl=0 d.defl=0.09 baseSpeed.defl=60 brake.defl=1
     //% weight=100
-    export function setPID(p: number, i: number, d: number, baseSpeed: number, brake: number, threshold: number, line: LineType): void {
+    export function setPID(p: number, i: number, d: number, baseSpeed: number, brake: number, line: LineType): void {
         _kp = p;
         _ki = i;
         _kd = d;
         _baseSpeed = baseSpeed;
         _brake = brake;
-        _threshold = threshold; // 保存你在现场测出的最佳阈值
         _isWhiteLine = (line === LineType.White);
         _integral = 0;
         _prevError = 0;
@@ -115,7 +117,7 @@ namespace AnalogLineFollow {
         basic.pause(200);
 
         while (true) {
-            PlanetX_Basic.Trackbit_get_state_value(); // 刷新传感器底层状态
+            PlanetX_Basic.Trackbit_get_state_value();
             if (PlanetX_Basic.TrackbitState(targetState)) {
                 break;
             }
@@ -133,16 +135,17 @@ namespace AnalogLineFollow {
     //% weight=72
     export function pidUntilIntersection(intersectType: IntersectType, action: IntersectAction, crossSpeed: number, crossTime: number): void {
         while (true) {
-            PlanetX_Basic.Trackbit_get_state_value(); // 强制刷新 IIC 数据
+            PlanetX_Basic.Trackbit_get_state_value();
 
+            // 依赖硬件学习后的极度可靠数据
             let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
             let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
 
-            // 使用用户设定的自定义阈值(_threshold)替代死板的150/100
-            let l2_on = _isWhiteLine ? (l2 > _threshold) : (l2 < _threshold);
-            let r2_on = _isWhiteLine ? (r2 > _threshold) : (r2 < _threshold);
+            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
+            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
 
             let isMet = false;
+            // 完全符合你的要求：1号看白即左，4号看白即右
             if (intersectType === IntersectType.Left) isMet = l2_on;
             else if (intersectType === IntersectType.Right) isMet = r2_on;
             else if (intersectType === IntersectType.Cross) isMet = (l2_on && r2_on);
@@ -179,8 +182,8 @@ namespace AnalogLineFollow {
             let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
             let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
 
-            let l2_on = _isWhiteLine ? (l2 > _threshold) : (l2 < _threshold);
-            let r2_on = _isWhiteLine ? (r2 > _threshold) : (r2 < _threshold);
+            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
+            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
 
             let leftSpeed = 0;
             let rightSpeed = 0;
@@ -214,10 +217,8 @@ namespace AnalogLineFollow {
     //% block="执行一次PID灰度巡线"
     //% weight=70
     export function pidRun(): void {
-        // 直接读取硬件底层算好的高精度偏移量 (-3000 到 3000)
         let error = PlanetX_Basic.TrackBit_get_offset();
 
-        // 兼容白线模式
         if (_isWhiteLine) {
             error = -error;
         }
@@ -225,20 +226,17 @@ namespace AnalogLineFollow {
         _integral += error;
         let derivative = error - _prevError;
 
-        // PID 核心计算 (因为error最大3000，所以Kp通常很小，如0.07)
         let adjustment = (_kp * error) + (_ki * _integral) + (_kd * derivative);
 
         _prevError = error;
 
-        // 智能弯道减速：将0~3000的偏差缩小比例，用来做刹车系数计算
-        let curveSharpness = Math.abs(error) / 100; // 最大约等于 30
+        let curveSharpness = Math.abs(error) / 100;
         let dynamicBaseSpeed = _baseSpeed - (curveSharpness * _brake);
-        dynamicBaseSpeed = Math.max(15, dynamicBaseSpeed); // 保证转弯时最低速度不低于 15
+        dynamicBaseSpeed = Math.max(15, dynamicBaseSpeed);
 
         let leftSpeed = dynamicBaseSpeed + adjustment;
         let rightSpeed = dynamicBaseSpeed - adjustment;
 
-        // 限幅保护，防止数值爆炸
         leftSpeed = Math.max(-100, Math.min(100, leftSpeed));
         rightSpeed = Math.max(-100, Math.min(100, rightSpeed));
 

@@ -27,6 +27,24 @@ namespace AnalogLineFollow {
         White
     }
 
+    export enum IntersectType {
+        //% block="左路口"
+        Left,
+        //% block="右路口"
+        Right,
+        //% block="十字/停止线"
+        Cross,
+        //% block="任意路口"
+        Any
+    }
+
+    export enum IntersectAction {
+        //% block="平滑停车"
+        Stop,
+        //% block="冲过路口(盲开)"
+        CrossOver
+    }
+
     //% block="初始化 Kp $p Ki $i Kd $d 基础速度 $baseSpeed 刹车 $brake 赛道 $line"
     //% p.defl=1.5 i.defl=0 d.defl=0.8 baseSpeed.defl=40 brake.defl=5
     //% weight=100
@@ -55,7 +73,6 @@ namespace AnalogLineFollow {
             _lastRightSpeed = s;
             basic.pause(delayMs);
         }
-
         neZha.setMotorSpeed(neZha.MotorList.M1, targetSpeed);
         neZha.setMotorSpeed(neZha.MotorList.M2, targetSpeed);
         _lastLeftSpeed = targetSpeed;
@@ -100,7 +117,6 @@ namespace AnalogLineFollow {
                 break;
             }
         }
-
         neZha.setMotorSpeed(neZha.MotorList.M1, 0);
         neZha.setMotorSpeed(neZha.MotorList.M2, 0);
         _lastLeftSpeed = 0;
@@ -108,10 +124,90 @@ namespace AnalogLineFollow {
         basic.pause(50);
     }
 
+    // ==========================================
+    // 🚀 核心升级：可调参数的路口巡线系统
+    // ==========================================
+    //% block="PID巡线 直到遇见 $intersectType 然后 $action | 冲过速度 $crossSpeed 持续(ms) $crossTime"
+    //% crossSpeed.defl=40 crossTime.defl=300
+    //% weight=72
+    export function pidUntilIntersection(intersectType: IntersectType, action: IntersectAction, crossSpeed: number, crossTime: number): void {
+        while (true) {
+            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
+            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+
+            let l2_on = _isWhiteLine ? (l2 > 150) : (l2 < 100);
+            let r2_on = _isWhiteLine ? (r2 > 150) : (r2 < 100);
+
+            let isMet = false;
+            if (intersectType === IntersectType.Left) isMet = l2_on;
+            else if (intersectType === IntersectType.Right) isMet = r2_on;
+            else if (intersectType === IntersectType.Cross) isMet = (l2_on && r2_on);
+            else if (intersectType === IntersectType.Any) isMet = (l2_on || r2_on);
+
+            if (isMet) {
+                // 如果用户选择的是"平滑停车"，自动无视后面的速度和时间参数
+                if (action === IntersectAction.Stop) {
+                    smoothBrake(10);
+                }
+                // 如果用户选择的是"冲过路口"，则按照用户设定的速度和时间进行盲开
+                else if (action === IntersectAction.CrossOver) {
+                    neZha.setMotorSpeed(neZha.MotorList.M1, crossSpeed);
+                    neZha.setMotorSpeed(neZha.MotorList.M2, crossSpeed);
+                    basic.pause(crossTime); // 闭眼盲开指定的时间脱离路口
+                    _lastLeftSpeed = crossSpeed;
+                    _lastRightSpeed = crossSpeed;
+                }
+                break;
+            }
+
+            pidRun();
+            basic.pause(5);
+        }
+    }
+
+    //% block="自动对齐停止线(十字/T型) | 调整速度 $speed"
+    //% speed.defl=30
+    //% weight=71
+    export function alignToLine(speed: number): void {
+        let alignedCount = 0;
+        let timeout = input.runningTime() + 3000;
+
+        while (alignedCount < 3 && input.runningTime() < timeout) {
+            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
+            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+
+            let l2_on = _isWhiteLine ? (l2 > 150) : (l2 < 100);
+            let r2_on = _isWhiteLine ? (r2 > 150) : (r2 < 100);
+
+            let leftSpeed = 0;
+            let rightSpeed = 0;
+
+            if (!l2_on) leftSpeed = speed;
+            if (!r2_on) rightSpeed = speed;
+
+            if (l2_on && r2_on) {
+                alignedCount++;
+                leftSpeed = 0;
+                rightSpeed = 0;
+            } else {
+                alignedCount = 0;
+            }
+
+            neZha.setMotorSpeed(neZha.MotorList.M1, leftSpeed);
+            neZha.setMotorSpeed(neZha.MotorList.M2, rightSpeed);
+            basic.pause(15);
+        }
+
+        neZha.setMotorSpeed(neZha.MotorList.M1, 0);
+        neZha.setMotorSpeed(neZha.MotorList.M2, 0);
+        _lastLeftSpeed = 0;
+        _lastRightSpeed = 0;
+        basic.pause(100);
+    }
+
     //% block="执行一次PID灰度巡线"
     //% weight=70
     export function pidRun(): void {
-        // 1. 获取所有探头模拟值
         let l2_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
         let l1_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Two);
         let r1_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Three);
@@ -119,30 +215,18 @@ namespace AnalogLineFollow {
 
         let isLost = false;
 
-        // 2. 🌟 黑科技：独立阈值检测"断线/虚线"状态
-        // 探头读数：遇到黑线数值小(<100)，遇到白纸数值大(>150)
         if (_isWhiteLine) {
-            // 巡白线：如果4个探头全是黑底（读数均小于100），说明进入虚线空隙
-            if (l2_val < 100 && l1_val < 100 && r1_val < 100 && r2_val < 100) {
-                isLost = true;
-            }
+            if (l2_val < 100 && l1_val < 100 && r1_val < 100 && r2_val < 100) isLost = true;
         } else {
-            // 巡黑线：如果4个探头全是白底（读数均大于150），说明进入虚线空隙
-            if (l2_val > 150 && l1_val > 150 && r1_val > 150 && r2_val > 150) {
-                isLost = true;
-            }
+            if (l2_val > 150 && l1_val > 150 && r1_val > 150 && r2_val > 150) isLost = true;
         }
 
-        // 3. 断线续航（姿态保持系统）触发
         if (isLost) {
-            // 冻结 PID，直接按照脱线前最后一毫秒的车身姿态（速度差）进行盲开滑行！
             neZha.setMotorSpeed(neZha.MotorList.M1, _lastLeftSpeed);
             neZha.setMotorSpeed(neZha.MotorList.M2, _lastRightSpeed);
-            // 直接 return 结束本次循环，不更新 _prevError，保证找到线后无缝衔接
             return;
         }
 
-        // --- 以下为正常的 PID 差速计算 ---
         let left_weight = (l2_val * 2) + l1_val;
         let right_weight = (r2_val * 2) + r1_val;
         let error = left_weight - right_weight;

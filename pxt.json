@@ -1,6 +1,6 @@
 {
     "name": "哪吒-行星自编方块",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "",
     "dependencies": {
         "core": "*",

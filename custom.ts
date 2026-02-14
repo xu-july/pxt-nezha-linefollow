@@ -1,4 +1,4 @@
-//% color="#00C04A" weight=100 icon="\uf1b9" block="模拟灰度巡线控制"
+//% color="#00C04A" weight=100 icon="\uf1b9" block="智能IIC灰度巡线"
 namespace AnalogLineFollow {
     let _kp = 0;
     let _ki = 0;
@@ -6,8 +6,10 @@ namespace AnalogLineFollow {
     let _prevError = 0;
     let _integral = 0;
 
-    let _baseSpeed = 40;
-    let _brake = 0;
+    let _baseSpeed = 60;
+    let _brake = 1;
+    let _threshold = 120; // 新增：可自定义的黑白阈值
+
     let _lastLeftSpeed = 0;
     let _lastRightSpeed = 0;
 
@@ -45,15 +47,16 @@ namespace AnalogLineFollow {
         CrossOver
     }
 
-    //% block="初始化 Kp $p Ki $i Kd $d 基础速度 $baseSpeed 刹车 $brake 赛道 $line"
-    //% p.defl=1.5 i.defl=0 d.defl=0.8 baseSpeed.defl=40 brake.defl=5
+    //% block="初始化 IIC巡线 Kp $p Ki $i Kd $d 基础速度 $baseSpeed 刹车 $brake 黑白阈值 $threshold 赛道 $line"
+    //% p.defl=0.07 i.defl=0 d.defl=0.09 baseSpeed.defl=60 brake.defl=1 threshold.defl=120
     //% weight=100
-    export function setPID(p: number, i: number, d: number, baseSpeed: number, brake: number, line: LineType): void {
+    export function setPID(p: number, i: number, d: number, baseSpeed: number, brake: number, threshold: number, line: LineType): void {
         _kp = p;
         _ki = i;
         _kd = d;
         _baseSpeed = baseSpeed;
         _brake = brake;
+        _threshold = threshold; // 保存你在现场测出的最佳阈值
         _isWhiteLine = (line === LineType.White);
         _integral = 0;
         _prevError = 0;
@@ -112,10 +115,11 @@ namespace AnalogLineFollow {
         basic.pause(200);
 
         while (true) {
-            PlanetX_Basic.Trackbit_get_state_value();
+            PlanetX_Basic.Trackbit_get_state_value(); // 刷新传感器底层状态
             if (PlanetX_Basic.TrackbitState(targetState)) {
                 break;
             }
+            basic.pause(5);
         }
         neZha.setMotorSpeed(neZha.MotorList.M1, 0);
         neZha.setMotorSpeed(neZha.MotorList.M2, 0);
@@ -124,19 +128,19 @@ namespace AnalogLineFollow {
         basic.pause(50);
     }
 
-    // ==========================================
-    // 🚀 核心升级：可调参数的路口巡线系统
-    // ==========================================
     //% block="PID巡线 直到遇见 $intersectType 然后 $action | 冲过速度 $crossSpeed 持续(ms) $crossTime"
     //% crossSpeed.defl=40 crossTime.defl=300
     //% weight=72
     export function pidUntilIntersection(intersectType: IntersectType, action: IntersectAction, crossSpeed: number, crossTime: number): void {
         while (true) {
+            PlanetX_Basic.Trackbit_get_state_value(); // 强制刷新 IIC 数据
+
             let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
             let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
 
-            let l2_on = _isWhiteLine ? (l2 > 150) : (l2 < 100);
-            let r2_on = _isWhiteLine ? (r2 > 150) : (r2 < 100);
+            // 使用用户设定的自定义阈值(_threshold)替代死板的150/100
+            let l2_on = _isWhiteLine ? (l2 > _threshold) : (l2 < _threshold);
+            let r2_on = _isWhiteLine ? (r2 > _threshold) : (r2 < _threshold);
 
             let isMet = false;
             if (intersectType === IntersectType.Left) isMet = l2_on;
@@ -145,15 +149,13 @@ namespace AnalogLineFollow {
             else if (intersectType === IntersectType.Any) isMet = (l2_on || r2_on);
 
             if (isMet) {
-                // 如果用户选择的是"平滑停车"，自动无视后面的速度和时间参数
                 if (action === IntersectAction.Stop) {
                     smoothBrake(10);
                 }
-                // 如果用户选择的是"冲过路口"，则按照用户设定的速度和时间进行盲开
                 else if (action === IntersectAction.CrossOver) {
                     neZha.setMotorSpeed(neZha.MotorList.M1, crossSpeed);
                     neZha.setMotorSpeed(neZha.MotorList.M2, crossSpeed);
-                    basic.pause(crossTime); // 闭眼盲开指定的时间脱离路口
+                    basic.pause(crossTime);
                     _lastLeftSpeed = crossSpeed;
                     _lastRightSpeed = crossSpeed;
                 }
@@ -173,11 +175,12 @@ namespace AnalogLineFollow {
         let timeout = input.runningTime() + 3000;
 
         while (alignedCount < 3 && input.runningTime() < timeout) {
+            PlanetX_Basic.Trackbit_get_state_value();
             let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
             let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
 
-            let l2_on = _isWhiteLine ? (l2 > 150) : (l2 < 100);
-            let r2_on = _isWhiteLine ? (r2 > 150) : (r2 < 100);
+            let l2_on = _isWhiteLine ? (l2 > _threshold) : (l2 < _threshold);
+            let r2_on = _isWhiteLine ? (r2 > _threshold) : (r2 < _threshold);
 
             let leftSpeed = 0;
             let rightSpeed = 0;
@@ -205,51 +208,37 @@ namespace AnalogLineFollow {
         basic.pause(100);
     }
 
+    // ==========================================
+    // 🚀 IIC 高精度偏移量 PID 核心引擎
+    // ==========================================
     //% block="执行一次PID灰度巡线"
     //% weight=70
     export function pidRun(): void {
-        let l2_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
-        let l1_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Two);
-        let r1_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Three);
-        let r2_val = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+        // 直接读取硬件底层算好的高精度偏移量 (-3000 到 3000)
+        let error = PlanetX_Basic.TrackBit_get_offset();
 
-        let isLost = false;
-
-        if (_isWhiteLine) {
-            if (l2_val < 100 && l1_val < 100 && r1_val < 100 && r2_val < 100) isLost = true;
-        } else {
-            if (l2_val > 150 && l1_val > 150 && r1_val > 150 && r2_val > 150) isLost = true;
-        }
-
-        if (isLost) {
-            neZha.setMotorSpeed(neZha.MotorList.M1, _lastLeftSpeed);
-            neZha.setMotorSpeed(neZha.MotorList.M2, _lastRightSpeed);
-            return;
-        }
-
-        let left_weight = (l2_val * 2) + l1_val;
-        let right_weight = (r2_val * 2) + r1_val;
-        let error = left_weight - right_weight;
-
-        error = error / 100;
-
+        // 兼容白线模式
         if (_isWhiteLine) {
             error = -error;
         }
 
         _integral += error;
         let derivative = error - _prevError;
+
+        // PID 核心计算 (因为error最大3000，所以Kp通常很小，如0.07)
         let adjustment = (_kp * error) + (_ki * _integral) + (_kd * derivative);
 
         _prevError = error;
 
-        let curveSharpness = Math.abs(error);
+        // 智能弯道减速：将0~3000的偏差缩小比例，用来做刹车系数计算
+        let curveSharpness = Math.abs(error) / 100; // 最大约等于 30
         let dynamicBaseSpeed = _baseSpeed - (curveSharpness * _brake);
-        dynamicBaseSpeed = Math.max(10, dynamicBaseSpeed);
+        dynamicBaseSpeed = Math.max(15, dynamicBaseSpeed); // 保证转弯时最低速度不低于 15
 
         let leftSpeed = dynamicBaseSpeed + adjustment;
         let rightSpeed = dynamicBaseSpeed - adjustment;
 
+        // 限幅保护，防止数值爆炸
         leftSpeed = Math.max(-100, Math.min(100, leftSpeed));
         rightSpeed = Math.max(-100, Math.min(100, rightSpeed));
 

@@ -316,8 +316,6 @@ namespace AnalogLineFollow {
         _lastRightSpeed = 0;
     }
 
-}
-
     // 🚀 实战积木 4：精准校准前进 (带自动刹车)
     //% block="以 $speed 速度前进 持续(ms) $timeMs"
     //% speed.min=10 speed.max=100 speed.defl=50

@@ -97,18 +97,18 @@ namespace AnalogLineFollow {
     //% weight=94
     export function forwardCalibrated(speed: number, timeMs: number): void {
         let safeSpeed = Math.abs(speed); // 防呆：防止误填负数
-
+        
         // 直接调用底层拦截器，它会自动帮你乘上底盘校准比例！
         _setMotorSpeed(safeSpeed, safeSpeed);
-
+        
         // 同步状态记忆，方便后续如果接平滑刹车能读取到正确速度
         _lastLeftSpeed = safeSpeed;
         _lastRightSpeed = safeSpeed;
-
+        
         basic.pause(timeMs); // 持续运行设定的时间
-
+        
         // 跑完瞬间刹车，并清零速度记忆
-        _setMotorSpeed(0, 0);
+        _setMotorSpeed(0, 0); 
         _lastLeftSpeed = 0;
         _lastRightSpeed = 0;
     }
@@ -119,16 +119,16 @@ namespace AnalogLineFollow {
     //% timeMs.defl=1000
     //% weight=93
     export function backwardCalibrated(speed: number, timeMs: number): void {
-        let safeSpeed = Math.abs(speed);
-
+        let safeSpeed = Math.abs(speed); 
+        
         // 后退就是加上负号，底层依然会完美按比例分配负电压！
         _setMotorSpeed(-safeSpeed, -safeSpeed);
         _lastLeftSpeed = -safeSpeed;
         _lastRightSpeed = -safeSpeed;
-
+        
         basic.pause(timeMs);
-
-        _setMotorSpeed(0, 0);
+        
+        _setMotorSpeed(0, 0); 
         _lastLeftSpeed = 0;
         _lastRightSpeed = 0;
     }
@@ -222,7 +222,7 @@ namespace AnalogLineFollow {
                 if (metCount >= count) {
                     // 🚀 如果数量达标，执行最终动作（修改为了精准死刹）
                     if (action === IntersectAction.Stop) {
-                        _setMotorSpeed(0, 0);
+                        _setMotorSpeed(0, 0); 
                         _lastLeftSpeed = 0;
                         _lastRightSpeed = 0;
                         basic.pause(50); // 瞬间死刹并稍微锁死一瞬间，彻底消除物理惯性

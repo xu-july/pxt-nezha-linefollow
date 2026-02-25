@@ -1,6 +1,6 @@
 {
     "name": "哪吒-行星自编方块",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "",
     "dependencies": {
         "core": "*",
@@ -8,7 +8,7 @@
         "microphone": "*",
         "pxt-nezha": "github:elecfreaks/pxt-nezha#v1.3.10",
         "pxt-PlanetX": "github:elecfreaks/pxt-planetx#v1.6.2",
-        "哪吒-行星自编方块": "github:xu-july/pxt-nezha-linefollow#v2.0.0"
+        "哪吒-行星自编方块": "github:xu-july/pxt-nezha-linefollow"
     },
     "files": [
         "main.blocks",

@@ -7,8 +7,7 @@
         "radio": "*",
         "microphone": "*",
         "pxt-nezha": "github:elecfreaks/pxt-nezha#v1.3.10",
-        "pxt-PlanetX": "github:elecfreaks/pxt-planetx#v1.6.2",
-        "哪吒-行星自编方块": "github:xu-july/pxt-nezha-linefollow"
+        "pxt-PlanetX": "github:elecfreaks/pxt-planetx#v1.6.2"
     },
     "files": [
         "main.blocks",

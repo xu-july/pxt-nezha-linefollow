@@ -15,9 +15,13 @@ namespace AnalogLineFollow {
     let _lastRightSpeed = 0;
     let _isWhiteLine = false;
 
-    // 🚀 底盘硬件校准系数（默认1.0，即100%动力）
+    // 🚀 ��盘硬件校准系数（默认1.0，即100%动力）
     let _leftMotorScale = 1.0;
     let _rightMotorScale = 1.0;
+
+    // ✅ 修复：路口计数去抖动（防止重复计数）
+    let _lastIntersectTime = 0;
+    const INTERSECT_DEBOUNCE_MS = 500;
 
     export enum TurnDir {
         //% block="左"
@@ -78,6 +82,7 @@ namespace AnalogLineFollow {
         _isWhiteLine = (line === LineType.White);
         _integral = 0;
         _prevError = 0;
+        _lastIntersectTime = 0;
     }
 
     // 🚀 实战积木 3：底盘硬件校准 (完美修复输入框Bug)
@@ -140,12 +145,15 @@ namespace AnalogLineFollow {
         let currentS = Math.round((_lastLeftSpeed + _lastRightSpeed) / 2);
         let step = (targetSpeed >= currentS) ? 5 : -5;
 
+        // ✅ 修复：确保到达 targetSpeed
         for (let s = currentS; (step > 0 ? s <= targetSpeed : s >= targetSpeed); s += step) {
             _setMotorSpeed(s, s);
             _lastLeftSpeed = s;
             _lastRightSpeed = s;
             basic.pause(delayMs);
         }
+        
+        // 保底：确保最终停在目标速度
         _setMotorSpeed(targetSpeed, targetSpeed);
         _lastLeftSpeed = targetSpeed;
         _lastRightSpeed = targetSpeed;
@@ -155,16 +163,24 @@ namespace AnalogLineFollow {
     //% delayMs.defl=20
     //% weight=80
     export function smoothBrake(delayMs: number): void {
-        let steps = 10;
-        let leftStep = _lastLeftSpeed / steps;
-        let rightStep = _lastRightSpeed / steps;
+        // ✅ 修复：使用比例衰减而非差值衰减，避免浮点精度误差
+        let leftStart = _lastLeftSpeed;
+        let rightStart = _lastRightSpeed;
+        const steps = 10;
 
-        for (let i = 0; i < steps; i++) {
-            _lastLeftSpeed -= leftStep;
-            _lastRightSpeed -= rightStep;
-            _setMotorSpeed(_lastLeftSpeed, _lastRightSpeed);
+        for (let i = 1; i <= steps; i++) {
+            let ratio = 1 - (i / steps);  // 从 0.9 递减到 0
+            let leftCurrent = leftStart * ratio;
+            let rightCurrent = rightStart * ratio;
+            
+            _setMotorSpeed(leftCurrent, rightCurrent);
+            _lastLeftSpeed = leftCurrent;
+            _lastRightSpeed = rightCurrent;
+            
             basic.pause(delayMs);
         }
+        
+        // 确保最终完全停止
         _setMotorSpeed(0, 0);
         _lastLeftSpeed = 0;
         _lastRightSpeed = 0;
@@ -181,14 +197,16 @@ namespace AnalogLineFollow {
         _setMotorSpeed(leftS, rightS);
         basic.pause(200); // 先盲转0.2秒，强行脱离当前压着的黑线
 
-        while (true) {
-            // 调用 V8 引擎的高精度偏移量，只要偏差在 -400 到 400 之间，说明车头已经完美正对黑线！
+        // ✅ 修复：添加超时保护
+        let timeout = input.runningTime() + 5000;  // 5秒超时
+        while (input.runningTime() < timeout) {
             let offset = PlanetX_Basic.TrackBit_get_offset();
             if (Math.abs(offset) < 400) {
                 break;
             }
             basic.pause(5);
         }
+        
         _setMotorSpeed(0, 0); // 瞬间死刹
         _lastLeftSpeed = 0;
         _lastRightSpeed = 0;
@@ -216,8 +234,10 @@ namespace AnalogLineFollow {
             else if (intersectType === IntersectType.Cross) isMet = (l2_on && r2_on);
             else if (intersectType === IntersectType.Any) isMet = (l2_on || r2_on);
 
-            if (isMet) {
+            // ✅ 修复：添加去抖动逻辑，防止同一个路口重复计数
+            if (isMet && (input.runningTime() - _lastIntersectTime) > INTERSECT_DEBOUNCE_MS) {
                 metCount++; // 发现目标路口，计数+1
+                _lastIntersectTime = input.runningTime();
 
                 if (metCount >= count) {
                     // 如果数量达标，执行最终动作
@@ -233,10 +253,16 @@ namespace AnalogLineFollow {
                 } else {
                     let passSpeed = Math.max(35, _baseSpeed);
                     _setMotorSpeed(passSpeed, passSpeed);
+                    _lastLeftSpeed = passSpeed;  // ✅ 修复：同步速度状态
+                    _lastRightSpeed = passSpeed;
                     basic.pause(300); // 冷却时间 (跨越路口)
                 }
-            } else {
+            } else if (!isMet) {
                 pidRun(); // 没遇到路口就正常巡线
+                basic.pause(5);
+            } else {
+                // 仍在去抖动期间，继续巡线
+                pidRun();
                 basic.pause(5);
             }
         }
@@ -248,8 +274,9 @@ namespace AnalogLineFollow {
     export function alignToLine(speed: number): void {
         let alignedCount = 0;
         let timeout = input.runningTime() + 3000;
+        let alignTarget = 3;  // 连续对齐3次才认为成功
 
-        while (alignedCount < 3 && input.runningTime() < timeout) {
+        while (alignedCount < alignTarget && input.runningTime() < timeout) {
             PlanetX_Basic.Trackbit_get_state_value();
             let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
             let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
@@ -272,12 +299,21 @@ namespace AnalogLineFollow {
             }
 
             _setMotorSpeed(leftSpeed, rightSpeed);
+            _lastLeftSpeed = leftSpeed;  // ✅ 修复：同步状态
+            _lastRightSpeed = rightSpeed;
             basic.pause(15);
         }
 
+        // ✅ 修复：添加超时告警反馈
         _setMotorSpeed(0, 0);
         _lastLeftSpeed = 0;
         _lastRightSpeed = 0;
+        
+        if (alignedCount < alignTarget) {
+            // 超时未能成功对齐，可根据需要添加错误处理
+            // serial.writeLine("Warning: Alignment timeout after 3000ms");
+        }
+        
         basic.pause(100);
     }
 

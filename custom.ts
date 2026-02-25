@@ -47,6 +47,8 @@ namespace AnalogLineFollow {
     export enum IntersectAction {
         //% block="精准急刹"
         Stop,
+        //% block="平滑刹车"
+        SmoothBrake,
         //% block="冲过路口(盲开)"
         CrossOver
     }
@@ -195,7 +197,7 @@ namespace AnalogLineFollow {
         basic.pause(50);
     }
 
-    // 🚀 实战积木 1：万能路口计数器 (修改为遇线瞬间急刹)
+    // 🚀 实战积木 1：万能路口计数器 (支持多选项卡)
     //% block="PID巡线 经过 $count 个 $intersectType 后 $action | 冲过速度 $crossSpeed 持续(ms) $crossTime"
     //% count.defl=1 crossSpeed.defl=40 crossTime.defl=300
     //% weight=73
@@ -220,12 +222,14 @@ namespace AnalogLineFollow {
                 metCount++; // 发现目标路口，计数+1
 
                 if (metCount >= count) {
-                    // 🚀 如果数量达标，执行最终动作（修改为了精准死刹）
+                    // 🚀 如果数量达标，根据选择执行对应的动作
                     if (action === IntersectAction.Stop) {
                         _setMotorSpeed(0, 0); 
                         _lastLeftSpeed = 0;
                         _lastRightSpeed = 0;
                         basic.pause(50); // 瞬间死刹并稍微锁死一瞬间，彻底消除物理惯性
+                    } else if (action === IntersectAction.SmoothBrake) {
+                        smoothBrake(10); // 启动平滑刹车（每步延迟10毫秒，用时约100毫秒温柔停下）
                     } else if (action === IntersectAction.CrossOver) {
                         _setMotorSpeed(crossSpeed, crossSpeed);
                         basic.pause(crossTime);

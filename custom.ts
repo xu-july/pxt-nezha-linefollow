@@ -321,4 +321,68 @@ namespace AnalogLineFollow {
         // 实际输出依然会被底层的校准拦截器处理
         _setMotorSpeed(leftSpeed, rightSpeed);
     }
+        // 🚀 实战积木 6：智能虚线巡线 (失线记忆法)
+    //% block="虚线巡线(直/弯通用) 基础速度 $baseSpeed 持续(ms) $timeMs"
+    //% baseSpeed.defl=45 timeMs.defl=2000
+    //% weight=68
+    export function pidDashedLine(baseSpeed: number, timeMs: number): void {
+        let endTime = input.runningTime() + timeMs;
+        
+        // 创建“记忆库”：默认起步全速前进
+        let lastLeft = baseSpeed;
+        let lastRight = baseSpeed;
+
+        while (input.runningTime() < endTime) {
+            PlanetX_Basic.Trackbit_get_state_value();
+            
+            // 读取四个探头的灰度值，判断是否能看到线
+            let l1 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Two);
+            let r1 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Three);
+            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
+            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+
+            let l1_on = _isWhiteLine ? (l1 > _internalThreshold) : (l1 < _internalThreshold);
+            let r1_on = _isWhiteLine ? (r1 > _internalThreshold) : (r1 < _internalThreshold);
+            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
+            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
+
+            // 只要有任何一个探头能看到线，就认为“在线上”
+            let hasLine = l1_on || r1_on || l2_on || r2_on;
+
+            if (hasLine) {
+                // --- 1. 在线上：正常PID巡线，并更新记忆库 ---
+                let error = PlanetX_Basic.TrackBit_get_offset();
+                if (_isWhiteLine) error = -error;
+
+                _integral += error;
+                let derivative = error - _prevError;
+                let adjustment = (_kp * error) + (_ki * _integral) + (_kd * derivative);
+                _prevError = error;
+
+                let leftS = baseSpeed + adjustment;
+                let rightS = baseSpeed - adjustment;
+
+                // 限制在-100到100之间防爆表
+                leftS = Math.max(-100, Math.min(100, leftS));
+                rightS = Math.max(-100, Math.min(100, rightS));
+
+                // 关键一步：把算出来的速度存入记忆库！
+                lastLeft = leftS;
+                lastRight = rightS;
+
+                _setMotorSpeed(leftS, rightS);
+            } else {
+                // --- 2. 瞎了(在空白处)：进入盲开记忆模式 ---
+                // 停止计算，直接输出断线前最后一瞬间保存的速度！
+                _setMotorSpeed(lastLeft, lastRight);
+            }
+            
+            basic.pause(10); // 10毫秒刷新一次状态
+        }
+        
+        // 设定的时间到了，跑完这段虚线，执行瞬间死刹
+        _setMotorSpeed(0, 0);
+        _lastLeftSpeed = 0;
+        _lastRightSpeed = 0;
+    }
 }

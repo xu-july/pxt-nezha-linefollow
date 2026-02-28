@@ -1,30 +1,19 @@
 //% color="#00C04A" weight=100 icon="\uf1b9" block="智能IIC实战巡线"
 namespace AnalogLineFollow {
     // ==========================================
-    // 全局变量与状态记忆
+    // 全局变量与状态记忆 
     // ==========================================
-    let _kp = 0;
-    let _ki = 0;
-    let _kd = 0;
-    let _prevError = 0;
-    let _integral = 0;
-    let _baseSpeed = 60;
-    let _brake = 1;
-    let _internalThreshold = 150;
+    let _kp = 0; let _ki = 0; let _kd = 0;
+    let _prevError = 0; let _integral = 0;
+    let _baseSpeed = 60; let _brake = 1;
     let _integralLimit = 1500; 
-
-    let _lastLeftSpeed = 0;
-    let _lastRightSpeed = 0;
-    let _isWhiteLine = false;
+    let _lastLeftSpeed = 0; let _lastRightSpeed = 0;
+    let _isWhiteLine = false; 
     let _isFirstRun = true;    
 
-    // 底盘硬件校准系数
     let _leftMotorScale = 1.0;
     let _rightMotorScale = 1.0;
 
-    // ==========================================
-    // 枚举类型定义 (下拉菜单选项)
-    // ==========================================
     export enum TurnDir {
         //% block="左"
         Left,
@@ -68,16 +57,9 @@ namespace AnalogLineFollow {
         CrossAll
     }
 
-    // ==========================================
-    // 🚀 核心底层：电机安全拦截器
-    // ==========================================
     function _setMotorSpeed(left: number, right: number): void {
-        let finalL = left * _leftMotorScale;
-        let finalR = right * _rightMotorScale;
-
-        finalL = Math.max(-100, Math.min(100, finalL));
-        finalR = Math.max(-100, Math.min(100, finalR));
-
+        let finalL = Math.max(-100, Math.min(100, left * _leftMotorScale));
+        let finalR = Math.max(-100, Math.min(100, right * _rightMotorScale));
         neZha.setMotorSpeed(neZha.MotorList.M1, Math.round(finalL));
         neZha.setMotorSpeed(neZha.MotorList.M2, Math.round(finalR));
     }
@@ -119,11 +101,10 @@ namespace AnalogLineFollow {
         _prevError = error;
 
         let curveSharpness = Math.abs(error) / 100;
-        let dynamicBaseSpeed = _baseSpeed - (curveSharpness * _brake);
-        dynamicBaseSpeed = Math.max(15, dynamicBaseSpeed);
+        let dynamicBaseSpeed = Math.max(15, _baseSpeed - (curveSharpness * _brake));
 
-        let leftSpeed = Math.max(-100, Math.min(100, dynamicBaseSpeed + adjustment));
-        let rightSpeed = Math.max(-100, Math.min(100, dynamicBaseSpeed - adjustment));
+        let leftSpeed = dynamicBaseSpeed + adjustment;
+        let rightSpeed = dynamicBaseSpeed - adjustment;
 
         _lastLeftSpeed = leftSpeed; _lastRightSpeed = rightSpeed;
         _setMotorSpeed(leftSpeed, rightSpeed);
@@ -138,16 +119,20 @@ namespace AnalogLineFollow {
         let metCount = 0; 
         while (metCount < count) {
             PlanetX_Basic.Trackbit_get_state_value();
-            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
-            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+            
+            let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
+            let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
-            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
+            // 🚀 核心修复：硬件State_1为白，State_0为黑
+            // 黑线模式下(!_isWhiteLine)：踩黑线输出false，因此取反(!raw)变为true
+            // 白线模式下(_isWhiteLine)：踩白线输出true，直接使用(raw)为true
+            let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
+            let r2_on = _isWhiteLine ? raw_r2 : !raw_r2;
 
             let isMet = false;
             if (intersectType === IntersectType.Left) isMet = l2_on;
             else if (intersectType === IntersectType.Right) isMet = r2_on;
-            else if (intersectType === IntersectType.Cross) isMet = (l2_on || r2_on); 
+            else if (intersectType === IntersectType.Cross) isMet = (l2_on && r2_on);
             else if (intersectType === IntersectType.Any) isMet = (l2_on || r2_on);
 
             if (isMet) {
@@ -166,16 +151,17 @@ namespace AnalogLineFollow {
                     while (true) {
                         pidRun(); 
                         PlanetX_Basic.Trackbit_get_state_value();
-                        let check_l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
-                        let check_r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+                        let check_raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
+                        let check_raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-                        let check_l2_on = _isWhiteLine ? (check_l2 > _internalThreshold) : (check_l2 < _internalThreshold);
-                        let check_r2_on = _isWhiteLine ? (check_r2 > _internalThreshold) : (check_r2 < _internalThreshold);
+                        // 内部防抖循环同步修正逻辑
+                        let check_l2_on = _isWhiteLine ? check_raw_l2 : !check_raw_l2;
+                        let check_r2_on = _isWhiteLine ? check_raw_r2 : !check_raw_r2;
 
                         let stillMet = false;
                         if (intersectType === IntersectType.Left) stillMet = check_l2_on;
                         else if (intersectType === IntersectType.Right) stillMet = check_r2_on;
-                        else if (intersectType === IntersectType.Cross) stillMet = (check_l2_on || check_r2_on);
+                        else if (intersectType === IntersectType.Cross) stillMet = (check_l2_on && check_r2_on);
                         else if (intersectType === IntersectType.Any) stillMet = (check_l2_on || check_r2_on);
 
                         if (!stillMet) break; 
@@ -196,15 +182,17 @@ namespace AnalogLineFollow {
 
         while (input.runningTime() < endTime) {
             PlanetX_Basic.Trackbit_get_state_value();
-            let l1 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Two);
-            let r1 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Three);
-            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
-            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+            
+            let raw_l1 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Two, PlanetX_Basic.TrackbitType.State_1);
+            let raw_r1 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Three, PlanetX_Basic.TrackbitType.State_1);
+            let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
+            let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            let l1_on = _isWhiteLine ? (l1 > _internalThreshold) : (l1 < _internalThreshold);
-            let r1_on = _isWhiteLine ? (r1 > _internalThreshold) : (r1 < _internalThreshold);
-            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
-            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
+            // 🚀 同步修正：State_1为白，State_0为黑
+            let l1_on = _isWhiteLine ? raw_l1 : !raw_l1;
+            let r1_on = _isWhiteLine ? raw_r1 : !raw_r1;
+            let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
+            let r2_on = _isWhiteLine ? raw_r2 : !raw_r2;
 
             if (l1_on || r1_on || l2_on || r2_on) {
                 let error = PlanetX_Basic.TrackBit_get_offset();
@@ -217,11 +205,14 @@ namespace AnalogLineFollow {
                 let adjustment = (_kp * error) + (_ki * _integral) + (_kd * derivative);
                 _prevError = error;
 
-                let leftS = Math.max(-100, Math.min(100, baseSpeed + adjustment));
-                let rightS = Math.max(-100, Math.min(100, baseSpeed - adjustment));
+                let leftS = baseSpeed + adjustment;
+                let rightS = baseSpeed - adjustment;
                 lastLeft = leftS; lastRight = rightS;
                 _setMotorSpeed(leftS, rightS);
-            } else { wasLost = true; _setMotorSpeed(lastLeft, lastRight); }
+            } else { 
+                wasLost = true; 
+                _setMotorSpeed(lastLeft, lastRight); 
+            }
             basic.pause(10); 
         }
         _setMotorSpeed(0, 0); _lastLeftSpeed = 0; _lastRightSpeed = 0;
@@ -236,7 +227,7 @@ namespace AnalogLineFollow {
         let startTime = input.runningTime();
         let cardFound = false;
         let cardData = "";
-        let positionState = 0; // 0:原点, 1:前, 2:后, 3:左, 4:右
+        let positionState = 0; 
 
         function tempMove(lSpeed: number, rSpeed: number, timeMs: number) {
             _setMotorSpeed(lSpeed, rSpeed); basic.pause(timeMs);
@@ -246,7 +237,6 @@ namespace AnalogLineFollow {
         while (input.runningTime() - startTime < timeout) {
             if (PlanetX_Basic.checkCard()) { cardFound = true; cardData = PlanetX_Basic.readDataBlock(); break; }
 
-            // 策略 A: 前后探测
             if (strategy === SearchStrategy.FrontBack || strategy === SearchStrategy.CrossAll) {
                 tempMove(speed, speed, stepTime); positionState = 1;
                 if (PlanetX_Basic.checkCard()) { cardFound = true; cardData = PlanetX_Basic.readDataBlock(); break; }
@@ -259,7 +249,6 @@ namespace AnalogLineFollow {
                 if (PlanetX_Basic.checkCard()) { cardFound = true; cardData = PlanetX_Basic.readDataBlock(); break; }
             }
 
-            // 策略 B: 左右探测
             if (strategy === SearchStrategy.LeftRight || strategy === SearchStrategy.CrossAll) {
                 tempMove(-speed, speed, stepTime); positionState = 3;
                 if (PlanetX_Basic.checkCard()) { cardFound = true; cardData = PlanetX_Basic.readDataBlock(); break; }
@@ -273,20 +262,15 @@ namespace AnalogLineFollow {
             }
         }
 
-        // ==========================================
-        // 🚀 核心优化：后台多线程播报结果，绝不阻塞！
-        // ==========================================
         if (cardFound) {
-            // 把耗时的播报扔给后台去干
             control.inBackground(function () {
                 for (let i = 0; i < count; i++) {
                     basic.showString(cardData);
                     if (i < count - 1) basic.pause(interval);
                 }
-                basic.clearScreen(); // 播报完自动清屏
+                basic.clearScreen();
             });
         } else {
-            // 没找到卡片也扔到后台去提示，不浪费车子行动时间
             control.inBackground(function () {
                 basic.showIcon(IconNames.No);
                 basic.pause(1000);
@@ -294,9 +278,6 @@ namespace AnalogLineFollow {
             });
         }
 
-        // ==========================================
-        // 主线程：瞬间完成强行消除偏移量归位
-        // ==========================================
         if (positionState === 1) tempMove(-speed, -speed, stepTime);
         else if (positionState === 2) tempMove(speed, speed, stepTime);
         else if (positionState === 3) tempMove(speed, -speed, stepTime);
@@ -316,11 +297,13 @@ namespace AnalogLineFollow {
 
         while (alignedCount < 3 && input.runningTime() < timeout) {
             PlanetX_Basic.Trackbit_get_state_value();
-            let l2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.One);
-            let r2 = PlanetX_Basic.TrackbitgetGray(PlanetX_Basic.TrackbitChannel.Four);
+            
+            let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
+            let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            let l2_on = _isWhiteLine ? (l2 > _internalThreshold) : (l2 < _internalThreshold);
-            let r2_on = _isWhiteLine ? (r2 > _internalThreshold) : (r2 < _internalThreshold);
+            // 🚀 同步修正：State_1为白，State_0为黑
+            let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
+            let r2_on = _isWhiteLine ? raw_r2 : !raw_r2;
 
             let leftSpeed = 0; let rightSpeed = 0;
             if (!l2_on) leftSpeed = speed;

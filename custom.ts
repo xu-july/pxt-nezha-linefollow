@@ -91,9 +91,6 @@ namespace AnalogLineFollow {
         // 🚀 主动获取传感器内置芯片高精度计算后的偏移量
         let error = PlanetX_Basic.TrackBit_get_offset();
         
-        // ❌ 删除了导致翻车的 if (_isWhiteLine) error = -error;
-        // 因为硬件学习后，输出的偏差方向永远自动适应赛道！
-
         if (_isFirstRun) { _prevError = error; _isFirstRun = false; }
 
         _integral += error;
@@ -167,7 +164,19 @@ namespace AnalogLineFollow {
                         basic.pause(5);
                     }
                 }
-            } else { pidRun(); basic.pause(5); }
+            } else { 
+                // 🚀 神级防扭曲逻辑 (PID 屏蔽区)
+                if (intersectType === IntersectType.Cross && (l2_on || r2_on)) {
+                    // 当寻找十字/停止线时，如果仅有一个探头踩线，瞬间没收 PID 控制权！
+                    // 锁死当前方向，让车子以直线微速滑过最后的临界点，防止“向左/向右猛打方向盘”
+                    let lockSpeed = Math.max(20, _baseSpeed * 0.5);
+                    _setMotorSpeed(lockSpeed, lockSpeed);
+                } else {
+                    // 正常巡线区间，让 PID 接管
+                    pidRun(); 
+                }
+                basic.pause(5); 
+            }
         }
     }
 
@@ -194,8 +203,6 @@ namespace AnalogLineFollow {
 
             if (l1_on || r1_on || l2_on || r2_on) {
                 let error = PlanetX_Basic.TrackBit_get_offset();
-                
-                // ❌ 同样删除画蛇添足的反转逻辑
 
                 if (wasLost) { _prevError = error; wasLost = false; }
 
@@ -381,5 +388,14 @@ namespace AnalogLineFollow {
             _setMotorSpeed(_lastLeftSpeed, _lastRightSpeed); basic.pause(delayMs);
         }
         _setMotorSpeed(0, 0); _lastLeftSpeed = 0; _lastRightSpeed = 0;
+    }
+
+    // 🚀 新增：一键紧急停止所有电机
+    //% block="停止所有电机"
+    //% weight=45
+    export function stopMotors(): void {
+        _setMotorSpeed(0, 0);
+        _lastLeftSpeed = 0;
+        _lastRightSpeed = 0;
     }
 }

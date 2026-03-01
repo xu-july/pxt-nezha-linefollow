@@ -88,8 +88,11 @@ namespace AnalogLineFollow {
     //% block="执行一次PID灰度巡线"
     //% weight=95
     export function pidRun(): void {
+        // 🚀 主动获取传感器内置芯片高精度计算后的偏移量
         let error = PlanetX_Basic.TrackBit_get_offset();
-        if (_isWhiteLine) error = -error;
+        
+        // ❌ 删除了导致翻车的 if (_isWhiteLine) error = -error;
+        // 因为硬件学习后，输出的偏差方向永远自动适应赛道！
 
         if (_isFirstRun) { _prevError = error; _isFirstRun = false; }
 
@@ -123,9 +126,6 @@ namespace AnalogLineFollow {
             let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
             let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            // 🚀 核心修复：硬件State_1为白，State_0为黑
-            // 黑线模式下(!_isWhiteLine)：踩黑线输出false，因此取反(!raw)变为true
-            // 白线模式下(_isWhiteLine)：踩白线输出true，直接使用(raw)为true
             let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
             let r2_on = _isWhiteLine ? raw_r2 : !raw_r2;
 
@@ -154,7 +154,6 @@ namespace AnalogLineFollow {
                         let check_raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
                         let check_raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-                        // 内部防抖循环同步修正逻辑
                         let check_l2_on = _isWhiteLine ? check_raw_l2 : !check_raw_l2;
                         let check_r2_on = _isWhiteLine ? check_raw_r2 : !check_raw_r2;
 
@@ -188,7 +187,6 @@ namespace AnalogLineFollow {
             let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
             let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            // 🚀 同步修正：State_1为白，State_0为黑
             let l1_on = _isWhiteLine ? raw_l1 : !raw_l1;
             let r1_on = _isWhiteLine ? raw_r1 : !raw_r1;
             let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
@@ -196,7 +194,8 @@ namespace AnalogLineFollow {
 
             if (l1_on || r1_on || l2_on || r2_on) {
                 let error = PlanetX_Basic.TrackBit_get_offset();
-                if (_isWhiteLine) error = -error;
+                
+                // ❌ 同样删除画蛇添足的反转逻辑
 
                 if (wasLost) { _prevError = error; wasLost = false; }
 
@@ -301,7 +300,6 @@ namespace AnalogLineFollow {
             let raw_l2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.One, PlanetX_Basic.TrackbitType.State_1);
             let raw_r2 = PlanetX_Basic.TrackbitChannelState(PlanetX_Basic.TrackbitChannel.Four, PlanetX_Basic.TrackbitType.State_1);
 
-            // 🚀 同步修正：State_1为白，State_0为黑
             let l2_on = _isWhiteLine ? raw_l2 : !raw_l2;
             let r2_on = _isWhiteLine ? raw_r2 : !raw_r2;
 
